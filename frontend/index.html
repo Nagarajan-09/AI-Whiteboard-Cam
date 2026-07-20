@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Whiteboard Cam</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://unpkg.com/fabric@5.3.0/dist/fabric.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header { text-align: center; margin-bottom: 30px; }
+        h1 { color: #333; font-size: 2rem; }
+        .subtitle { color: #666; margin-top: 8px; }
+        .upload-area { background: white; border-radius: 12px; padding: 40px; text-align: center; border: 2px dashed #ddd; cursor: pointer; transition: all 0.3s; margin-bottom: 30px; }
+        .upload-area:hover, .upload-area.drag-over { border-color: #4a90d9; background: #f0f7ff; }
+        .upload-area input { display: none; }
+        .upload-icon { font-size: 48px; margin-bottom: 16px; }
+        .upload-text { color: #666; font-size: 1.1rem; }
+        .btn { padding: 12px 24px; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: all 0.2s; }
+        .btn-primary { background: #4a90d9; color: white; }
+        .btn-primary:hover { background: #3a7bc8; }
+        .btn-primary:disabled { background: #ccc; cursor: not-allowed; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .controls { display: flex; gap: 12px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap; }
+        .select-group { display: flex; align-items: center; gap: 8px; }
+        .select-group label { color: #333; font-weight: 500; }
+        .select-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9rem; }
+        .results { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 900px) { .results { grid-template-columns: 1fr; } }
+        .panel { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .panel h3 { margin-bottom: 16px; color: #333; font-size: 1.1rem; }
+        .panel-content { min-height: 400px; }
+        .mermaid-container { background: #fafafa; border-radius: 8px; padding: 20px; min-height: 400px; overflow: auto; }
+        #canvas { border: 1px solid #ddd; border-radius: 8px; background: white; }
+        .code-view { font-family: monospace; font-size: 0.85rem; background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; overflow: auto; max-height: 400px; white-space: pre-wrap; }
+        .status { padding: 12px; border-radius: 8px; margin-bottom: 20px; display: none; }
+        .status.success { background: #d4edda; color: #155724; display: block; }
+        .status.error { background: #f8d7da; color: #721c24; display: block; }
+        .status.info { background: #d1ecf1; color: #0c5460; display: block; }
+        .loading { display: none; text-align: center; padding: 40px; }
+        .loading.show { display: block; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #4a90d9; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 16px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+        .tab { padding: 8px 16px; cursor: pointer; border-radius: 6px 6px 0 0; font-size: 0.9rem; color: #666; }
+        .tab.active { color: #4a90d9; font-weight: 600; background: #f0f7ff; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .image-preview { max-width: 100%; max-height: 300px; border-radius: 8px; margin-bottom: 16px; display: none; }
+        .image-preview.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎯 AI Whiteboard Cam</h1>
+            <p class="subtitle">Upload whiteboard photos to generate clean Mermaid diagrams & interactive canvases</p>
+        </header>
+
+        <div id="status" class="status"></div>
+
+        <div class="upload-area" id="uploadArea">
+            <input type="file" id="fileInput" accept="image/*">
+            <div class="upload-icon">📤</div>
+            <p class="upload-text">Click or drag & drop a whiteboard image<br><small>Supports: JPG, PNG, WebP, BMP (max 10MB)</small></p>
+        </div>
+
+        <img id="preview" class="image-preview" alt="Preview">
+
+        <div class="controls">
+            <div class="select-group">
+                <label>Diagram Type:</label>
+                <select id="diagramType">
+                    <option value="auto">Auto Detect</option>
+                    <option value="flowchart">Flowchart</option>
+                    <option value="sequence">Sequence</option>
+                    <option value="class">Class Diagram</option>
+                    <option value="state">State Diagram</option>
+                    <option value="er">ER Diagram</option>
+                    <option value="mindmap">Mind Map</option>
+                    <option value="timeline">Timeline</option>
+                </select>
+            </div>
+            <div class="select-group">
+                <label>Output Format:</label>
+                <select id="outputFormat">
+                    <option value="all">All Formats</option>
+                    <option value="mermaid">Mermaid Only</option>
+                    <option value="canvas">Canvas (Fabric.js)</option>
+                    <option value="svg">SVG</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" id="processBtn" disabled>Process Image</button>
+            <button class="btn btn-secondary" id="clearBtn">Clear</button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analyzing whiteboard...</p>
+        </div>
+
+        <div class="results" id="results" style="display: none;">
+            <div class="panel">
+                <h3>📊 Mermaid Diagram</h3>
+                <div class="tabs">
+                    <div class="tab active" data-tab="mermaid-render">Rendered</div>
+                    <div class="tab" data-tab="mermaid-code">Code</div>
+                </div>
+                <div class="panel-content">
+                    <div id="mermaid-render" class="tab-panel active">
+                        <div class="mermaid-container" id="mermaidOutput"></div>
+                    </div>
+                    <div id="mermaid-code" class="tab-panel">
+                        <pre class="code-view" id="mermaidCode"></pre>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>🎨 Interactive Canvas</h3>
+                <div class="tabs">
+                    <div class="tab active" data-tab="canvas-view">Fabric.js</div>
+                    <div class="tab" data-tab="canvas-json">JSON</div>
+                    <div class="tab" data-tab="svg-view">SVG</div>
+                    <div class="tab" data-tab="excalidraw-view">Excalidraw</div>
+                </div>
+                <div class="panel-content">
+                    <div id="canvas-view" class="tab-panel active">
+                        <canvas id="canvas" width="600" height="500"></canvas>
+                    </div>
+                    <div id="canvas-json" class="tab-panel">
+                        <pre class="code-view" id="canvasJson"></pre>
+                    </div>
+                    <div id="svg-view" class="tab-panel">
+                        <div class="mermaid-container" id="svgOutput"></div>
+                    </div>
+                    <div id="excalidraw-view" class="tab-panel">
+                        <pre class="code-view" id="excalidrawJson"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const preview = document.getElementById('preview');
+        const processBtn = document.getElementById('processBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+        const status = document.getElementById('status');
+        const diagramType = document.getElementById('diagramType');
+        const outputFormat = document.getElementById('outputFormat');
+
+        let currentImageId = null;
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('drag-over'); });
+        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag-over'));
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) handleFile(file);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) handleFile(e.target.files[0]);
+        });
+
+        function handleFile(file) {
+            if (file.size > 10 * 1024 * 1024) {
+                showStatus('File too large (max 10MB)', 'error');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                preview.src = e.target.result;
+                preview.classList.add('show');
+                processBtn.disabled = false;
+                showStatus('Image loaded. Click "Process Image" to analyze.', 'info');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        processBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            loading.classList.add('show');
+            results.style.display = 'none';
+            processBtn.disabled = true;
+            showStatus('Uploading and processing...', 'info');
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const uploadRes = await fetch('http://127.0.0.1:8001/api/v1/upload', {method: 'POST',body: formData});
+                const uploadData = await uploadRes.json();
+                if (!uploadData.success) throw new Error(uploadData.error || 'Upload failed');
+
+                currentImageId = uploadData.image_id;
+
+                const processRes = await fetch('http://127.0.0.1:8001/api/v1/process', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        image_id: currentImageId,
+        diagram_type: diagramType.value === 'auto' ? null : diagramType.value,
+        output_format: outputFormat.value
+    })
+});
+                const processData = await processRes.json();
+                if (!processData.success) throw new Error(processData.error || 'Processing failed');
+
+                displayResults(processData);
+                showStatus('Processing complete!', 'success');
+            } catch (err) {
+                showStatus(err.message, 'error');
+            } finally {
+                loading.classList.remove('show');
+                processBtn.disabled = false;
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            fileInput.value = '';
+            preview.classList.remove('show');
+            preview.src = '';
+            processBtn.disabled = true;
+            results.style.display = 'none';
+            status.className = 'status';
+            currentImageId = null;
+        });
+
+        function showStatus(msg, type) {
+            status.textContent = msg;
+            status.className = `status ${type}`;
+        }
+
+        function displayResults(data) {
+            results.style.display = 'grid';
+
+            if (data.mermaid_code) {
+    renderMermaid(data.mermaid_code);
+}
+
+            if (data.canvas_json) {
+                document.getElementById('canvasJson').textContent = JSON.stringify(data.canvas_json, null, 2);
+                renderCanvas(data.canvas_json);
+            }
+
+            if (data.svg) {
+                document.getElementById('svgOutput').innerHTML = data.svg;
+            }
+
+            if (data.processed?.canvas_json?.excalidraw) {
+                document.getElementById('excalidrawJson').textContent = JSON.stringify(data.processed.canvas_json.excalidraw, null, 2);
+            }
+        }
+
+       function renderMermaid(code) {
+    const container = document.getElementById('mermaidOutput');
+    container.innerHTML = '';
+
+    const cleanCode = String(code || '')
+        .replace(/```mermaid/gi, '')
+        .replace(/```/g, '')
+        .trim();
+
+    document.getElementById('mermaidCode').textContent = cleanCode;
+
+    const normalizedCode = cleanCode
+        .replace(/\r/g, '')
+        .trim()
+        .toLowerCase();
+
+    if (
+        !normalizedCode ||
+        normalizedCode === 'flowchart td' ||
+        normalizedCode === 'graph td'
+    ) {
+        container.innerHTML =
+            '<div style="padding:20px;color:#666;">No diagram elements were detected.</div>';
+        return;
+    }
+
+    mermaid.render(`mermaid-svg-${Date.now()}`, cleanCode)
+        .then(({ svg }) => {
+            container.innerHTML = svg;
+        })
+        .catch((error) => {
+            console.error('Mermaid error:', error);
+            container.innerHTML =
+                `<div style="color:red;padding:20px;">Mermaid Error: ${error.message}</div>`;
+        });
+}
+
+        function renderCanvas(canvasData) {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const fabric = window.fabric;
+
+            canvas.width = canvasData.width || 600;
+            canvas.height = canvasData.height || 500;
+
+            const fCanvas = new fabric.Canvas('canvas', {
+                width: canvasData.width || 600,
+                height: canvasData.height || 500,
+                backgroundColor: canvasData.background || '#ffffff'
+            });
+
+            canvasData.objects.forEach(obj => {
+                if (obj.type === 'group' && obj.objects) {
+                    const group = new fabric.Group(
+                        obj.objects.map(o => createFabricObject(o)),
+                        { left: obj.left, top: obj.top, width: obj.width, height: obj.height }
+                    );
+                    fCanvas.add(group);
+                } else {
+                    fCanvas.add(createFabricObject(obj));
+                }
+            });
+
+            fCanvas.renderAll();
+        }
+
+        function createFabricObject(obj) {
+            const fabric = window.fabric;
+            const common = {
+                left: obj.left, top: obj.top,
+                fill: obj.fill, stroke: obj.stroke,
+                strokeWidth: obj.strokeWidth,
+                opacity: obj.opacity ?? 1
+            };
+
+            switch (obj.type) {
+                case 'rect':
+                    return new fabric.Rect({
+                        ...common,
+                        width: obj.width, height: obj.height,
+                        rx: obj.rx || 0, ry: obj.ry || 0,
+                        originX: obj.originX || 'left',
+                        originY: obj.originY || 'top'
+                    });
+                case 'circle':
+                    return new fabric.Circle({
+                        ...common,
+                        radius: obj.radius,
+                        originX: 'center', originY: 'center'
+                    });
+                case 'path':
+                    return new fabric.Path(obj.path, {
+                        ...common,
+                        left: obj.left, top: obj.top,
+                        scaleX: obj.width / (obj.path?.reduce((max, p) => Math.max(max, p[1] || 0), 0) || 1),
+                        scaleY: obj.height / (obj.path?.reduce((max, p) => Math.max(max, p[2] || 0), 0) || 1)
+                    });
+                case 'textbox':
+                    return new fabric.Textbox(obj.text || '', {
+                        ...common,
+                        width: obj.width, height: obj.height,
+                        fontSize: obj.fontSize, fontFamily: obj.fontFamily,
+                        textAlign: obj.textAlign,
+                        originX: 'center', originY: 'center'
+                    });
+                case 'line':
+                    return new fabric.Path(obj.path, {
+                        ...common,
+                        stroke: obj.stroke, fill: '',
+                        strokeWidth: obj.strokeWidth,
+                        strokeDashArray: obj.strokeDashArray
+                    });
+                default:
+                    return new fabric.Rect({ ...common, width: obj.width, height: obj.height });
+            }
+        }
+
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const panelId = tab.dataset.tab;
+                tab.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                tab.parentElement.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(panelId).classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>
