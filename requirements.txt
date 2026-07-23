@@ -1,0 +1,33 @@
+# Web Framework
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+
+# AI/ML - Compatible versions
+opencv-python==4.6.0.66  # Version that satisfies both ultralytics (>=4.6.0) and paddleocr (<=4.6.0.66)
+ultralytics==8.2.55
+torch==2.3.1
+torchvision==0.18.1
+
+# OCR
+paddleocr==2.7.0.3
+
+# Image Processing
+Pillow==10.4.0
+numpy==1.26.4
+
+# Data Validation
+pydantic==2.7.4
+pydantic-settings==2.3.3
+
+# Utilities
+python-multipart==0.0.9
+python-dotenv==1.0.1
+httpx==0.27.0
+
+# Mermaid
+mermaid-py==0.2.1
+
+# For development (optional)
+# pytest>=7.0.0
+# black>=23.0.0
+# flake8>=6.0.0
