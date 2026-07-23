@@ -54,11 +54,13 @@ class WhiteboardProcessor:
 
         if self.nvidia_service:
             try:
-                extracted_data = await asyncio.to_thread(
+                raw_data = await asyncio.to_thread(
                     self.nvidia_service.extract_whiteboard_data,
                     image_data,
                     content_type,
                 )
+                # Stage 2: Sanitize raw VLM extraction
+                extracted_data = self._sanitize_extracted_data(raw_data)
             except Exception as e:
                 api_error_message = str(e)
                 logger.error("Processor caught NVIDIA API Error: %s", e)
@@ -104,6 +106,56 @@ class WhiteboardProcessor:
         )
 
     @staticmethod
+    def _sanitize_extracted_data(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Stage 2 Graph Sanitizer:
+        Deduplicates identical nodes and converts orphan floating words (Yes/No)
+        mistakenly recognized as shapes into edge labels.
+        """
+        raw_elements = data.get("elements", [])
+        raw_connections = data.get("connections", [])
+
+        EDGE_LABEL_KEYWORDS = {"yes", "no", "true", "false", "ok", "cancel"}
+
+        sanitized_elements = []
+        element_text_to_id = {}
+        id_redirection = {}
+
+        for elem in raw_elements:
+            raw_id = str(elem.get("id") or "")
+            text = str(elem.get("text") or "").strip()
+            clean_text_lower = text.lower()
+
+            # Rule 1: Skip shapes that are actually floating line labels
+            if clean_text_lower in EDGE_LABEL_KEYWORDS:
+                continue
+
+            # Rule 2: Deduplicate nodes with identical text
+            if clean_text_lower in element_text_to_id:
+                id_redirection[raw_id] = element_text_to_id[clean_text_lower]
+            else:
+                element_text_to_id[clean_text_lower] = raw_id
+                sanitized_elements.append(elem)
+
+        # Rule 3: Re-map connections to use merged node IDs
+        sanitized_connections = []
+        for conn in raw_connections:
+            from_id = id_redirection.get(conn.get("from_id"), conn.get("from_id"))
+            to_id = id_redirection.get(conn.get("to_id"), conn.get("to_id"))
+
+            if from_id and to_id and from_id != to_id:
+                sanitized_connections.append({
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "label": str(conn.get("label") or "").strip()
+                })
+
+        return {
+            "elements": sanitized_elements,
+            "connections": sanitized_connections
+        }
+
+    @staticmethod
     def _build_mermaid_code(data: Dict[str, Any]) -> str:
         """Generates publication-quality Mermaid diagrams with spatial ordering and CSS class definitions."""
         elements = data.get("elements", [])
@@ -120,7 +172,7 @@ class WhiteboardProcessor:
 
         lines = ["flowchart TD"]
 
-        # Professional Color Palette Tokens
+        # Color Palette Tokens
         lines.append("    classDef startEnd fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d;")
         lines.append("    classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f;")
         lines.append("    classDef process fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e3a8a;")
