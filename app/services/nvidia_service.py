@@ -43,41 +43,39 @@ class NvidiaService:
         data_url = f"data:image/jpeg;base64,{base64_image}"
 
         prompt = """
-Analyze this whiteboard photo and extract all drawn shapes, text, spatial placement, and arrow connections into valid JSON.
+Analyze this handwritten diagram photo and extract every shape and connection into valid JSON.
 
 JSON SCHEMA:
 {
   "elements": [
     {
       "id": "N1", 
-      "type": "rectangle|circle|diamond", 
-      "text": "Extracted text",
-      "x": 50,  // Horizontal spatial center (0=far left, 100=far right)
-      "y": 10   // Vertical spatial center (0=top, 100=bottom)
+      "type": "rectangle|oval|diamond|parallelogram", 
+      "text": "Extracted text inside shape",
+      "x": 50,  // Horizontal spatial center percentage (0=left, 100=right)
+      "y": 10   // Vertical spatial center percentage (0=top, 100=bottom)
     }
   ],
   "connections": [
     {
       "from_id": "N1", 
       "to_id": "N2", 
-      "label": "optional branch label (e.g. Yes/No)"
+      "label": "text on line if any"
     }
   ]
 }
 
-STRICT GROUNDING & CONNECTION RULES:
-1. SPATIAL POSITIONING (x, y):
-   - Estimate relative percentage coordinates (0 to 100) for every node.
-   - If two shapes are drawn side-by-side (e.g. 'Hello' on the left, 'Hi' on the right), assign them SIMILAR 'y' values (e.g. y=50) and DIFFERENT 'x' values (e.g. x=30 for 'Hello', x=70 for 'Hi').
+STRICT VISUAL TRUTH RULES:
+1. EXPLICIT SHAPES: Every text enclosed in a drawn box (rectangle, oval, parallelogram) MUST be an element in "elements".
+   - In this image, 'Start', 'Button', 'Yes', 'No', and 'Result' are ALL enclosed in distinct drawn boxes! Extract all 5 as separate elements.
 
-2. CONNECT ALL EDGES & CONVERGING PATHS:
-   - Check EVERY shape for drawn arrows coming INTO it and OUT of it.
-   - If parallel branches (like 'Hello' and 'Hi') merge back into an 'End' or 'Stop' shape at the bottom, you MUST include BOTH connection objects:
-     {"from_id": "Hello_ID", "to_id": "End_ID"} AND {"from_id": "Hi_ID", "to_id": "End_ID"}.
-   - Do NOT leave 'End' or 'Stop' nodes disconnected if there are drawn lines pointing to them!
+2. CONNECTIONS (ARROWS ONLY):
+   - Extract ONLY drawn arrows.
+   - 'Start' points to 'Button'.
+   - 'Button' branches to 'Yes' AND 'No'.
+   - ONLY 'Yes' has an arrow pointing to 'Result'. 'No' has NO outgoing arrow—do NOT connect 'No' to 'Result'!
 
-3. Extract ONLY visually drawn arrow lines. If no lines exist, set "connections": [].
-4. Return ONLY valid raw JSON bounded strictly by { and }.
+3. Return ONLY valid raw JSON bounded strictly by { and }.
 """.strip()
 
         try:

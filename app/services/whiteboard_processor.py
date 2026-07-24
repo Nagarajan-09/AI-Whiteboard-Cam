@@ -109,35 +109,27 @@ class WhiteboardProcessor:
     def _sanitize_extracted_data(data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Stage 2 Graph Sanitizer:
-        Deduplicates identical nodes and converts orphan floating words (Yes/No)
-        mistakenly recognized as shapes into edge labels.
+        Deduplicates identical nodes while preserving visually drawn shapes (like 'Yes'/'No' boxes).
         """
         raw_elements = data.get("elements", [])
         raw_connections = data.get("connections", [])
 
-        EDGE_LABEL_KEYWORDS = {"yes", "no", "true", "false", "ok", "cancel"}
-
         sanitized_elements = []
-        element_text_to_id = {}
+        seen_texts = {}
         id_redirection = {}
 
         for elem in raw_elements:
             raw_id = str(elem.get("id") or "")
             text = str(elem.get("text") or "").strip()
-            clean_text_lower = text.lower()
+            clean_key = text.lower()
 
-            # Rule 1: Skip shapes that are actually floating line labels
-            if clean_text_lower in EDGE_LABEL_KEYWORDS:
-                continue
-
-            # Rule 2: Deduplicate nodes with identical text
-            if clean_text_lower in element_text_to_id:
-                id_redirection[raw_id] = element_text_to_id[clean_text_lower]
+            # Merge true duplicate nodes (e.g., if model sees two 'Button' nodes at same place)
+            if clean_key in seen_texts:
+                id_redirection[raw_id] = seen_texts[clean_key]
             else:
-                element_text_to_id[clean_text_lower] = raw_id
+                seen_texts[clean_key] = raw_id
                 sanitized_elements.append(elem)
 
-        # Rule 3: Re-map connections to use merged node IDs
         sanitized_connections = []
         for conn in raw_connections:
             from_id = id_redirection.get(conn.get("from_id"), conn.get("from_id"))
