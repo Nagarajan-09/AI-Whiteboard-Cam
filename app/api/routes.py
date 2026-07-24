@@ -1,9 +1,9 @@
 import io
 import logging
 import uuid
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from PIL import Image
 
 from app.core.config import settings
@@ -95,13 +95,54 @@ async def process_whiteboard(request: ProcessRequest):
             processed=processed,
             mermaid_code=processed.mermaid_code,
             canvas_json=processed.canvas_json,
-            svg=processed.svg
+            svg=getattr(processed, "svg", None)
         )
     except Exception as e:
         logger.exception(f"Error processing whiteboard image ID {request.image_id}")
         return ProcessResponse(
             success=False,
             whiteboard_id=request.image_id,
+            error=str(e)
+        )
+
+
+@router.post("/process-direct", response_model=ProcessResponse)
+async def process_whiteboard_direct(
+    file: UploadFile = File(...),
+    diagram_type: Optional[str] = Form(None),
+    output_format: Optional[str] = Form("all"),
+):
+    """Direct single-step upload and process endpoint used by the frontend."""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be a valid image")
+
+    image_data = await file.read()
+
+    if len(image_data) > settings.max_upload_size:
+        raise HTTPException(status_code=400, detail="File size exceeds maximum limit")
+
+    try:
+        processed = await processor.process_image(
+            image_data=image_data,
+            filename=file.filename or "whiteboard.png",
+            content_type=file.content_type,
+            diagram_type=diagram_type if diagram_type else None,
+            output_format=output_format or "all"
+        )
+
+        return ProcessResponse(
+            success=True,
+            whiteboard_id=str(uuid.uuid4()),
+            processed=processed,
+            mermaid_code=processed.mermaid_code,
+            canvas_json=processed.canvas_json,
+            svg=getattr(processed, "svg", None)
+        )
+    except Exception as e:
+        logger.exception("Error during direct whiteboard processing")
+        return ProcessResponse(
+            success=False,
+            whiteboard_id="",
             error=str(e)
         )
 

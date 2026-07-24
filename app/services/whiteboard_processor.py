@@ -206,46 +206,98 @@ class WhiteboardProcessor:
 
     @staticmethod
     def _build_canvas_json(data: Dict[str, Any]) -> Dict[str, Any]:
-        """Generates Fabric.js canvas layout using relative spatial coordinates (x, y)."""
+        """
+        Generates Fabric.js canvas JSON with node IDs and connection endpoints
+        to enable real-time dynamic line tracking in the frontend.
+        """
         objects = []
         elements = data.get("elements", [])
+        connections = data.get("connections", [])
 
         canvas_width = 600
         canvas_height = 500
 
+        # Store node coordinates mapped to node_id
+        node_coords: Dict[str, tuple[int, int]] = {}
+
+        # 1. Build Node Groups with explicit `node_id`
         for i, elem in enumerate(elements):
+            node_id = str(elem.get("id") or f"N{i+1}").replace("-", "_")
             text = str(elem.get("text") or "Node")
 
             rel_x = float(elem.get("x") if elem.get("x") is not None else 50)
             rel_y = float(elem.get("y") if elem.get("y") is not None else (i + 1) * 20)
 
-            pixel_x = int((rel_x / 100.0) * (canvas_width - 140)) + 20
-            pixel_y = int((rel_y / 100.0) * (canvas_height - 80)) + 20
+            # Convert percentages to canvas pixel offsets
+            center_x = int((rel_x / 100.0) * (canvas_width - 140)) + 70
+            center_y = int((rel_y / 100.0) * (canvas_height - 80)) + 40
 
-            # Add Shape Rectangle
+            node_coords[node_id] = (center_x, center_y)
+
+            top_left_x = center_x - 55
+            top_left_y = center_y - 22
+
+            fill_color = "#dcfce7" if text.lower() in ["start", "stop", "end"] else "#eff6ff"
+            stroke_color = "#16a34a" if text.lower() in ["start", "stop", "end"] else "#2563eb"
+            text_color = "#14532d" if text.lower() in ["start", "stop", "end"] else "#1e3a8a"
+
+            group_objects = [
+                {
+                    "type": "rect",
+                    "left": top_left_x,
+                    "top": top_left_y,
+                    "width": 110,
+                    "height": 44,
+                    "fill": fill_color,
+                    "stroke": stroke_color,
+                    "strokeWidth": 2,
+                    "rx": 8,
+                    "ry": 8,
+                },
+                {
+                    "type": "textbox",
+                    "left": top_left_x + 5,
+                    "top": top_left_y + 12,
+                    "text": text,
+                    "fontSize": 14,
+                    "fontFamily": "system-ui, sans-serif",
+                    "fontWeight": "bold",
+                    "fill": text_color,
+                    "width": 100,
+                    "textAlign": "center",
+                }
+            ]
+
+            # Critical: Include `node_id` so frontend can match moving shapes to lines
             objects.append({
-                "type": "rect",
-                "left": pixel_x,
-                "top": pixel_y,
-                "width": 110,
-                "height": 45,
-                "fill": "#eff6ff",
-                "stroke": "#2563eb",
-                "strokeWidth": 2,
-                "rx": 6,
-                "ry": 6,
+                "type": "group",
+                "left": top_left_x,
+                "top": top_left_y,
+                "node_id": node_id,
+                "objects": group_objects
             })
-            # Add Centered Text Inside Shape
-            objects.append({
-                "type": "textbox",
-                "left": pixel_x + 10,
-                "top": pixel_y + 12,
-                "text": text,
-                "fontSize": 14,
-                "fill": "#1e3a8a",
-                "width": 90,
-                "textAlign": "center",
-            })
+
+        # 2. Build Lines with `from_id` and `to_id`
+        for conn in connections:
+            from_id = str(conn.get("from_id") or "").replace("-", "_")
+            to_id = str(conn.get("to_id") or "").replace("-", "_")
+
+            if from_id in node_coords and to_id in node_coords:
+                x1, y1 = node_coords[from_id]
+                x2, y2 = node_coords[to_id]
+
+                # Critical: Include `from_id` and `to_id`
+                objects.append({
+                    "type": "line",
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                    "stroke": "#64748b",
+                    "strokeWidth": 2,
+                    "from_id": from_id,
+                    "to_id": to_id
+                })
 
         return {
             "version": "5.3.0",
