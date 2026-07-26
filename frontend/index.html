@@ -286,6 +286,20 @@
                 });
         }
 
+        const BOX_HALF_W = 55;
+        const BOX_HALF_H = 22;
+
+        function clipToBox(cx, cy, ox, oy, halfW, halfH) {
+            const dx = ox - cx, dy = oy - cy;
+            if (dx === 0 && dy === 0) return { x: cx, y: cy };
+            const scales = [];
+            if (dx !== 0) scales.push(halfW / Math.abs(dx));
+            if (dy !== 0) scales.push(halfH / Math.abs(dy));
+            let t = scales.length ? Math.min(...scales) : 0;
+            t = Math.max(0, Math.min(t, 1));
+            return { x: cx + dx * t, y: cy + dy * t };
+        }
+
         function renderCanvas(canvasData) {
             const fabric = window.fabric;
             if (!canvasData || !canvasData.objects) return;
@@ -301,9 +315,10 @@
             });
 
             const nodeGroups = {};
-            const linesList = [];
+            const connectionsMeta = [];
+            let pendingLine = null;
 
-            // 1. Create Groups & Lines
+            // 1. Create Groups, Lines, and Arrowheads
             canvasData.objects.forEach(obj => {
                 if (obj.type === 'line') {
                     const line = new fabric.Line([obj.x1, obj.y1, obj.x2, obj.y2], {
@@ -315,18 +330,46 @@
                         to_id: obj.to_id
                     });
                     fCanvas.add(line);
-                    linesList.push(line);
+                    pendingLine = line;
+                } else if (obj.type === 'triangle') {
+                    const arrow = new fabric.Triangle({
+                        left: obj.left,
+                        top: obj.top,
+                        width: obj.width || 12,
+                        height: obj.height || 12,
+                        angle: obj.angle || 0,
+                        fill: obj.fill || '#64748b',
+                        originX: 'center',
+                        originY: 'center',
+                        selectable: false,
+                        evented: false,
+                        from_id: obj.from_id,
+                        to_id: obj.to_id
+                    });
+                    fCanvas.add(arrow);
+
+                    if (pendingLine && pendingLine.from_id === obj.from_id && pendingLine.to_id === obj.to_id) {
+                        connectionsMeta.push({ from_id: obj.from_id, to_id: obj.to_id, line: pendingLine, arrow });
+                        pendingLine = null;
+                    }
                 } else if (obj.type === 'group' && obj.objects) {
+                    const groupLeft = obj.left;
+                    const groupTop = obj.top;
+
                     const groupItems = obj.objects.map(item => {
                         if (item.type === 'rect') {
                             return new fabric.Rect({
-                                left: item.left, top: item.top, width: item.width, height: item.height,
+                                left: item.left - groupLeft,
+                                top: item.top - groupTop,
+                                width: item.width, height: item.height,
                                 fill: item.fill, stroke: item.stroke, strokeWidth: item.strokeWidth,
                                 rx: item.rx, ry: item.ry
                             });
                         } else if (item.type === 'textbox') {
                             return new fabric.Textbox(item.text, {
-                                left: item.left, top: item.top, fontSize: item.fontSize,
+                                left: item.left - groupLeft,
+                                top: item.top - groupTop,
+                                fontSize: item.fontSize,
                                 fill: item.fill, width: item.width, textAlign: item.textAlign,
                                 fontWeight: item.fontWeight
                             });
@@ -334,8 +377,8 @@
                     }).filter(Boolean);
 
                     const group = new fabric.Group(groupItems, {
-                        left: obj.left,
-                        top: obj.top,
+                        left: groupLeft,
+                        top: groupTop,
                         hasControls: true,
                         hasBorders: true,
                         node_id: obj.node_id
@@ -348,7 +391,7 @@
                 }
             });
 
-            // 2. Real-Time Dynamic Line Tracking on Moving Shapes
+            // 2. Real-Time Dynamic Line + Arrowhead Tracking on Moving Shapes
             fCanvas.on('object:moving', function(e) {
                 const target = e.target;
                 if (!target || !target.node_id) return;
@@ -356,14 +399,28 @@
                 const nodeId = target.node_id;
                 const center = target.getCenterPoint();
 
-                linesList.forEach(line => {
-                    if (line.from_id === nodeId) {
-                        line.set({ x1: center.x, y1: center.y });
-                    }
-                    if (line.to_id === nodeId) {
-                        line.set({ x2: center.x, y2: center.y });
-                    }
-                    line.setCoords();
+                connectionsMeta.forEach(meta => {
+                    let otherId = null, movedIsFrom = null;
+                    if (meta.from_id === nodeId) { otherId = meta.to_id; movedIsFrom = true; }
+                    else if (meta.to_id === nodeId) { otherId = meta.from_id; movedIsFrom = false; }
+                    if (!otherId) return;
+
+                    const otherGroup = nodeGroups[otherId];
+                    if (!otherGroup) return;
+                    const otherCenter = otherGroup.getCenterPoint();
+
+                    const fromCenter = movedIsFrom ? center : otherCenter;
+                    const toCenter = movedIsFrom ? otherCenter : center;
+
+                    const start = clipToBox(fromCenter.x, fromCenter.y, toCenter.x, toCenter.y, BOX_HALF_W, BOX_HALF_H);
+                    const end = clipToBox(toCenter.x, toCenter.y, fromCenter.x, fromCenter.y, BOX_HALF_W, BOX_HALF_H);
+
+                    meta.line.set({ x1: start.x, y1: start.y, x2: end.x, y2: end.y });
+                    meta.line.setCoords();
+
+                    const angleDeg = Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI + 90;
+                    meta.arrow.set({ left: end.x, top: end.y, angle: angleDeg });
+                    meta.arrow.setCoords();
                 });
 
                 fCanvas.renderAll();

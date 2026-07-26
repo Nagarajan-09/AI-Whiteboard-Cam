@@ -43,39 +43,55 @@ class NvidiaService:
         data_url = f"data:image/jpeg;base64,{base64_image}"
 
         prompt = """
-Analyze this handwritten diagram photo and extract every shape and connection into valid JSON.
+You are a diagram-scanning OCR engine, not a business analyst. You extract only what
+is visibly drawn. You never infer, complete, or "correct" a workflow's logic.
+
+TASK: Extract every shape, handwritten text, and connector line visible in this image
+into the JSON schema below. Nothing more, nothing less.
 
 JSON SCHEMA:
 {
   "elements": [
     {
-      "id": "N1", 
-      "type": "rectangle|oval|diamond|parallelogram", 
-      "text": "Extracted text inside shape",
-      "x": 50,  // Horizontal spatial center percentage (0=left, 100=right)
-      "y": 10   // Vertical spatial center percentage (0=top, 100=bottom)
+      "id": "N1",
+      "type": "rectangle|oval|diamond|parallelogram",
+      "text": "exact text as written, or [UNCLEAR] if illegible",
+      "x": 50,
+      "y": 10,
+      "confidence": "high|low"
     }
   ],
   "connections": [
     {
-      "from_id": "N1", 
-      "to_id": "N2", 
-      "label": "text on line if any"
+      "from_id": "N1",
+      "to_id": "N2",
+      "label": "text on the line if any, else empty string"
     }
   ]
 }
 
-STRICT VISUAL TRUTH RULES:
-1. EXPLICIT SHAPES: Every text enclosed in a drawn box (rectangle, oval, parallelogram) MUST be an element in "elements".
-   - In this image, 'Start', 'Button', 'Yes', 'No', and 'Result' are ALL enclosed in distinct drawn boxes! Extract all 5 as separate elements.
+STRICT VISUAL GROUNDING RULES:
+1. Every element you output must correspond to a shape you can actually see drawn
+   (a closed rectangle, oval, diamond, or parallelogram) with text inside or beside it.
+   Do not invent a node to make the flow "make sense."
+2. Only extract a connection if you can see a drawn line or arrow between two shapes.
+   Never add a connection because it would be the logical next step -- if there's no
+   visible line, it does not exist. A branch with no outgoing arrow (e.g. a dead-end
+   "No" box) must be output with no connection from it.
+3. Preserve exact handwritten text, exact connector direction (arrowhead determines
+   from_id -> to_id), and exact branch structure as drawn. Do not redesign, optimize,
+   merge, or "clean up" the workflow's logic.
+4. If text or a shape boundary is ambiguous, set "text" to "[UNCLEAR]" and
+   "confidence" to "low" rather than guessing. It is always better to mark something
+   unclear than to hallucinate a plausible-sounding value.
+5. x/y are the shape's spatial center as a percentage of image width/height
+   (0=left/top, 100=right/bottom) -- estimate these from the shape's actual position,
+   don't default them to evenly-spaced guesses.
+6. Before finalizing: re-check that every element and connection you're about to
+   output has a visible shape/line backing it in the image. Drop anything you can't
+   visually justify.
 
-2. CONNECTIONS (ARROWS ONLY):
-   - Extract ONLY drawn arrows.
-   - 'Start' points to 'Button'.
-   - 'Button' branches to 'Yes' AND 'No'.
-   - ONLY 'Yes' has an arrow pointing to 'Result'. 'No' has NO outgoing arrow—do NOT connect 'No' to 'Result'!
-
-3. Return ONLY valid raw JSON bounded strictly by { and }.
+Return ONLY valid raw JSON bounded strictly by { and }. No preamble, no markdown fences.
 """.strip()
 
         try:
@@ -121,7 +137,7 @@ STRICT VISUAL TRUTH RULES:
         try:
             with Image.open(io.BytesIO(image_bytes)) as img:
                 img = img.convert("RGB")
-                
+
                 # Contrast enhancement for phone photos/shadows
                 img = ImageOps.autocontrast(img, cutoff=2)
                 enhancer = ImageEnhance.Sharpness(img)
@@ -131,7 +147,7 @@ STRICT VISUAL TRUTH RULES:
                 if max(w, h) > max_size:
                     scale = max_size / float(max(w, h))
                     img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
-                
+
                 buffer = io.BytesIO()
                 img.save(buffer, format="JPEG", quality=88)
                 return buffer.getvalue()
